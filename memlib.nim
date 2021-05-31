@@ -307,7 +307,7 @@ proc buildImportTable(lib: MemoryModule) {.raises: [LibraryError].} =
   for desc in codeBase.descriptors(directory):
     let
       cname = codeBase{desc.Name}[LPCSTR]
-      handle = LoadLibraryA(cname)
+      handle = try: LoadLibraryA(cname) except: 0
 
     if handle == 0:
       raise newException(LibraryError, $cname & " not found")
