@@ -605,9 +605,9 @@ proc globalExit() =
     lib.unloadLib(force=true)
 
 proc globalInit() =
-    gLock.initLock()
-    memLibs = newSharedSeq[MemoryModule]()
-    rtLibs = newSharedSeq[HMODULE]()
+  gLock.initLock()
+  memLibs = newSharedSeq[MemoryModule]()
+  rtLibs = newSharedSeq[HMODULE]()
 
 once:
   globalInit()
@@ -893,7 +893,7 @@ proc hook*(lib: MemoryModule, name: string) {.raises: [LibraryError].} =
 
 # for memlib macro
 
-template memLoopup(callPtr: ptr pointer, dll: DllContent, sym: LPCSTR, loadLib, symAddr: untyped) =
+template memlookup(callPtr: ptr pointer, dll: DllContent, sym: LPCSTR, loadLib, symAddr: untyped) =
   var
     hash = toMD5(string dll)
     lib: MemoryModule
@@ -909,7 +909,7 @@ template memLoopup(callPtr: ptr pointer, dll: DllContent, sym: LPCSTR, loadLib, 
 
   callPtr[] = lib.symAddr(sym)
 
-template rtLoopup(callPtr: ptr pointer, name: string, sym: LPCSTR, errorLib, errorSym: untyped) =
+template rtlookup(callPtr: ptr pointer, name: string, sym: LPCSTR, errorLib, errorSym: untyped) =
   var handle = LoadLibrary(name)
   if handle == 0:
     errorLib
@@ -932,32 +932,32 @@ template rtLoopup(callPtr: ptr pointer, name: string, sym: LPCSTR, errorLib, err
   if callPtr[] == nil:
     errorSym
 
-proc checkedMemLoopup*(callPtr: ptr pointer, dll: DllContent, sym: LPCSTR) {.raises: [LibraryError].} =
+proc checkedmemlookup*(callPtr: ptr pointer, dll: DllContent, sym: LPCSTR) {.raises: [LibraryError].} =
   ## A helper used by `memlib` macro.
-  memLoopup(callPtr, dll, sym, checkedLoadLib, checkedSymAddr)
+  memlookup(callPtr, dll, sym, checkedLoadLib, checkedSymAddr)
 
-proc memLoopup*(callPtr: ptr pointer, dll: DllContent, sym: LPCSTR) {.raises: [].} =
+proc memlookup*(callPtr: ptr pointer, dll: DllContent, sym: LPCSTR) {.raises: [].} =
   ## A helper used by `memlib` macro.
-  memLoopup(callPtr, dll, sym, loadLib, symAddr)
+  memlookup(callPtr, dll, sym, loadLib, symAddr)
 
-proc checkedLibLoopup*(callPtr: ptr pointer, lib: MemoryModule, sym: LPCSTR) {.raises: [LibraryError].} =
+proc checkedLibLookup*(callPtr: ptr pointer, lib: MemoryModule, sym: LPCSTR) {.raises: [LibraryError].} =
   ## A helper used by `memlib` macro.
   callPtr[] = lib.checkedSymAddr(sym)
 
-proc libLoopup*(callPtr: ptr pointer, lib: MemoryModule, sym: LPCSTR) {.raises: [].} =
+proc libLookup*(callPtr: ptr pointer, lib: MemoryModule, sym: LPCSTR) {.raises: [].} =
   ## A helper used by `memlib` macro.
   callPtr[] = lib.symAddr(sym)
 
-proc checkedRtLoopup*(callPtr: ptr pointer, name: string, sym: LPCSTR) {.raises: [LibraryError].} =
+proc checkedrtlookup*(callPtr: ptr pointer, name: string, sym: LPCSTR) {.raises: [LibraryError].} =
   ## A helper used by `memlib` macro.
-  rtLoopup(callPtr, name, sym) do:
+  rtlookup(callPtr, name, sym) do:
     raise newException(LibraryError, "Could not load " & name)
   do:
     raise newException(LibraryError, symErrorMessage(sym))
 
-proc rtLoopup*(callPtr: ptr pointer, name: string, sym: LPCSTR) {.raises: [].} =
+proc rtlookup*(callPtr: ptr pointer, name: string, sym: LPCSTR) {.raises: [].} =
   ## A helper used by `memlib` macro.
-  rtLoopup(callPtr, name, sym) do:
+  rtlookup(callPtr, name, sym) do:
     return
   do:
     return
@@ -1012,9 +1012,9 @@ proc addParams(def: NimNode) =
 proc compose(dll, def: NimNode, hasRaises: bool): NimNode =
   var
     (sym, procty) = def.rewritePragma(hasRaises)
-    memLoopup = ident(if `hasRaises`: "checkedMemLoopup" else: "memLoopup")
-    libLoopup = ident(if `hasRaises`: "checkedLibLoopup" else: "libLoopup")
-    rtLoopup = ident(if `hasRaises`: "checkedRtLoopup" else: "rtLoopup")
+    memlookup = ident(if `hasRaises`: "checkedmemlookup" else: "memlookup")
+    libLookup = ident(if `hasRaises`: "checkedLibLookup" else: "libLookup")
+    rtlookup = ident(if `hasRaises`: "checkedrtlookup" else: "rtlookup")
 
   def.body = quote do:
     var
@@ -1031,13 +1031,13 @@ proc compose(dll, def: NimNode, hasRaises: bool): NimNode =
     if call.isNil:
       {.gcsafe.}:
         when `dll` is DllContent:
-          `memLoopup`(call.addr[ptr pointer], `dll`, sym)
+          `memlookup`(call.addr[ptr pointer], `dll`, sym)
 
         elif `dll` is MemoryModule:
-          `libLoopup`(call.addr[ptr pointer], `dll`, sym)
+          `libLookup`(call.addr[ptr pointer], `dll`, sym)
 
         elif `dll` is string: # Load dll at runtime
-          `rtLoopup`(call.addr[ptr pointer], `dll`, sym)
+          `rtlookup`(call.addr[ptr pointer], `dll`, sym)
 
         else:
           {.fatal: "memlib only accepts DllContent, MemoryModule, or string".}
