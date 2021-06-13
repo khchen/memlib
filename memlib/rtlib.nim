@@ -143,7 +143,7 @@ proc compose(dll, def: NimNode, hasRaises: bool): NimNode =
           `rtLookup`(call.addr[ptr pointer], `dll`, sym)
 
         else:
-          {.fatal: "memlib only accepts string".}
+          {.fatal: "rtlib only accepts string".}
 
     call()
 
@@ -153,7 +153,7 @@ proc compose(dll, def: NimNode, hasRaises: bool): NimNode =
 macro checkedRtlib*(dll, def: untyped): untyped =
   ## `dynlib` pragma replacement to load DLL at runtime.
   ## Raise `LibraryError` if error occurred.
-  ## See `memlib` for details.
+  ## See `rtlib` for details.
   def.expectKind(nnkProcDef)
   result = compose(dll, def, hasRaises = true)
 
