@@ -15,3 +15,7 @@ proc SHCreateMemStream(pInit: pointer, cbInit: cint): ptr IStream
 var str = "abcde"
 let pStream = SHCreateMemStream(addr str[0], cint str.len)
 assert pStream != nil
+
+proc printf(formatstr: cstring) {.rtlib: "msvcrt", importc: "printf", varargs.}
+
+printf("This works %s", "as expected")

@@ -30,7 +30,7 @@ type
   ExeEntryProc = proc (): int {.stdcall, gcsafe, raises: [], tags: [].}
 
   NameOrdinal = object
-    cname: cstring
+    cname: LPCSTR
     ordinal: int
 
   MemoryModuleObj = object
@@ -469,14 +469,14 @@ proc initialize(lib: MemoryModule) {.raises: [LibraryError].} =
 
 proc gatherSymbols(lib: MemoryModule) {.raises: [].} =
 
-  iterator entries(codeBase: pointer, exports: PIMAGE_EXPORT_DIRECTORY): (cstring, int) =
+  iterator entries(codeBase: pointer, exports: PIMAGE_EXPORT_DIRECTORY): (LPCSTR, int) =
     var
       nameRef = codeBase{exports.AddressOfNames}[ptr uint32]
       ordinal = codeBase{exports.AddressOfNameOrdinals}[ptr uint16]
 
     for i in 0 ..< exports.NumberOfNames:
       let
-        name = codeBase{nameRef[]}[cstring]
+        name = codeBase{nameRef[]}[LPCSTR]
         index = int ordinal[]
 
       yield (name, index)
@@ -515,7 +515,7 @@ proc findSymbol(lib: MemoryModule, name: LPCSTR): pointer {.raises: [LibraryErro
       index = LOWORD(name{uint})[DWORD] -% exports.Base
 
     else:
-      let found = lib.symbols.binarySearch(name) do (x: NameOrdinal, y: cstring) -> int:
+      let found = lib.symbols.binarySearch(name) do (x: NameOrdinal, y: LPCSTR) -> int:
         result = lstrcmpA(x.cname, y)
 
       if found < 0: break
@@ -620,13 +620,13 @@ atexit:
 
 proc checkedLoadLib*(data: DllContent): MemoryModule {.inline, raises: [LibraryError].} =
   ## Loads a DLL from memory. Raise `LibraryError` if the DLL could not be loaded.
-  result = loadLib(cstring data, data.string.len)
+  result = loadLib(&data.string, data.string.len)
 
 proc checkedLoadLib*(data: openarray[byte|char]): MemoryModule {.inline, raises: [LibraryError].} =
   ## Loads a DLL from memory. Raise `LibraryError` if the DLL could not be loaded.
   result = loadLib(unsafeaddr data[0], data.len)
 
-proc checkedSymAddr*(lib: MemoryModule, name: string|cstring): pointer {.inline, raises: [LibraryError].} =
+proc checkedSymAddr*(lib: MemoryModule, name: string|LPCSTR): pointer {.inline, raises: [LibraryError].} =
   ## Retrieves the address of a procedure from DLL by name.
   ## Raise `LibraryError` if the symbol could not be found.
   result = lib.findSymbol(name)
@@ -646,7 +646,7 @@ proc loadLib*(data: openarray[byte|char]): MemoryModule {.inline, raises: [].} =
   try: result = checkedLoadLib(data)
   except: result = nil
 
-proc symAddr*(lib: MemoryModule, name: string|cstring): pointer {.inline, raises: [].} =
+proc symAddr*(lib: MemoryModule, name: string|LPCSTR): pointer {.inline, raises: [].} =
   ## Retrieves the address of a procedure from DLL by name.
   ## Returns `nil` if the symbol could not be found.
   try: result = checkedSymAddr(lib, name)
@@ -932,7 +932,7 @@ template rtlookup(callPtr: ptr pointer, name: string, sym: LPCSTR, errorLib, err
   if callPtr[] == nil:
     errorSym
 
-proc checkedmemlookup*(callPtr: ptr pointer, dll: DllContent, sym: LPCSTR) {.raises: [LibraryError].} =
+proc checkedMemlookup*(callPtr: ptr pointer, dll: DllContent, sym: LPCSTR) {.raises: [LibraryError].} =
   ## A helper used by `memlib` macro.
   memlookup(callPtr, dll, sym, checkedLoadLib, checkedSymAddr)
 
@@ -948,7 +948,7 @@ proc libLookup*(callPtr: ptr pointer, lib: MemoryModule, sym: LPCSTR) {.raises: 
   ## A helper used by `memlib` macro.
   callPtr[] = lib.symAddr(sym)
 
-proc checkedrtlookup*(callPtr: ptr pointer, name: string, sym: LPCSTR) {.raises: [LibraryError].} =
+proc checkedRtlookup*(callPtr: ptr pointer, name: string, sym: LPCSTR) {.raises: [LibraryError].} =
   ## A helper used by `memlib` macro.
   rtlookup(callPtr, name, sym) do:
     raise newException(LibraryError, "Could not load " & name)
@@ -1009,43 +1009,59 @@ proc addParams(def: NimNode) =
         assert def.body[^1].kind == nnkCall
         def.body[^1].add node[i]
 
+proc isVarargs(def: NimNode): bool =
+  for i in def.pragma:
+    if i.eqIdent("varargs"): return true
+  return false
+
 proc compose(dll, def: NimNode, hasRaises: bool): NimNode =
   var
     (sym, procty) = def.rewritePragma(hasRaises)
     memlookup = ident(if `hasRaises`: "checkedmemlookup" else: "memlookup")
     libLookup = ident(if `hasRaises`: "checkedLibLookup" else: "libLookup")
     rtlookup = ident(if `hasRaises`: "checkedrtlookup" else: "rtlookup")
+    isVarargs = def.isVarargs()
+    name = if isVarargs: ident(def.name.strVal) else: ident("call")
 
-  def.body = quote do:
+  # We must lookup the symbol on import for proc with varargs.
+  # See https://github.com/khchen/memlib/issues/2.
+
+  var code = quote do:
     var
-      call {.global.}: `procty`
+      `name` {.global.}: `procty`
       sym: LPCSTR
 
     when `sym` is string:
-      sym = cstring `sym`
+      sym = LPCSTR `sym`
     elif `sym` is SomeInteger:
       sym = `sym`.int[LPCSTR]
     else:
       {.fatal: "importc only allows string or integer".}
 
-    if call.isNil:
+    if `name`.isNil:
       {.gcsafe.}:
         when `dll` is DllContent:
-          `memlookup`(call.addr[ptr pointer], `dll`, sym)
+          `memlookup`(`name`.addr[ptr pointer], `dll`, sym)
 
         elif `dll` is MemoryModule:
-          `libLookup`(call.addr[ptr pointer], `dll`, sym)
+          `libLookup`(`name`.addr[ptr pointer], `dll`, sym)
 
         elif `dll` is string: # Load dll at runtime
-          `rtlookup`(call.addr[ptr pointer], `dll`, sym)
+          `rtlookup`(`name`.addr[ptr pointer], `dll`, sym)
 
         else:
           {.fatal: "memlib only accepts DllContent, MemoryModule, or string".}
 
-    call()
+    `name`()
 
-  def.addParams()
-  result = def
+  if isVarargs:
+    code.del(code.len - 1) # remove last call
+    result = code
+
+  else:
+    def.body = code
+    def.addParams() # add params to last call
+    result = def
 
 macro checkedMemlib*(dll, def: untyped): untyped =
   ## `dynlib` pragma replacement to load DLL from memory or at runtime.

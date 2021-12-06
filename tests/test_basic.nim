@@ -21,11 +21,13 @@ suite "Test Suites for Memlib":
     proc test1(a, b, c: cstring): cstring {.dynlib: DllPath, cdecl, importc: "test_cdecl".}
     proc test2(a, b, c: cstring): cstring {.dynlib: DllPath, fastcall, importc: "test_fastcall".}
     proc test3(a, b, c: cstring): cstring {.dynlib: DllPath, stdcall, importc: "test_stdcall".}
+    proc test_varargs(i: cint): cint {.dynlib: DllPath, cdecl, varargs, importc.}
 
     check:
       test1("a", "b", "c") == "cdecl a b c"
       test2("a", "b", "c") == "fastcall a b c"
       test3("a", "b", "c") == "stdcall a b c"
+      test_varargs(1, 2, 3, 4, 0) == 10
 
   test "Memlib with string (Loading a DLL at runtime)":
     proc test1(a, b, c: cstring): cstring {.memlib: DllPath, cdecl, importc: "test_cdecl".}
@@ -34,6 +36,7 @@ suite "Test Suites for Memlib":
     proc test4(a, b, c: cstring): cstring {.memlib: DllPath, cdecl, importc: 3.}
     proc test5(a, b, c: cstring): cstring {.memlib: DllPath, fastcall, importc: 4.}
     proc test6(a, b, c: cstring): cstring {.memlib: DllPath, stdcall, importc: 5.}
+    proc test_varargs(i: cint): cint {.memlib: DllPath, cdecl, varargs, importc.}
 
     check:
       test1("a", "b", "c") == "cdecl a b c"
@@ -42,6 +45,7 @@ suite "Test Suites for Memlib":
       test4("a", "b", "c") == "cdecl a b c"
       test5("a", "b", "c") == "fastcall a b c"
       test6("a", "b", "c") == "stdcall a b c"
+      test_varargs(1, 2, 3, 4, 0) == 10
 
   test "Memlib with DllContent (Loading a DLL from memory)":
     proc test1(a, b, c: cstring): cstring {.memlib: DllData, cdecl, importc: "test_cdecl".}
@@ -50,6 +54,7 @@ suite "Test Suites for Memlib":
     proc test4(a, b, c: cstring): cstring {.memlib: DllData, cdecl, importc: 3.}
     proc test5(a, b, c: cstring): cstring {.memlib: DllData, fastcall, importc: 4.}
     proc test6(a, b, c: cstring): cstring {.memlib: DllData, stdcall, importc: 5.}
+    proc test_varargs(i: cint): cint {.memlib: DllData, cdecl, varargs, importc.}
 
     check:
       test1("a", "b", "c") == "cdecl a b c"
@@ -58,6 +63,7 @@ suite "Test Suites for Memlib":
       test4("a", "b", "c") == "cdecl a b c"
       test5("a", "b", "c") == "fastcall a b c"
       test6("a", "b", "c") == "stdcall a b c"
+      test_varargs(1, 2, 3, 4, 0) == 10
 
   test "Memlib with preloaded MemoryModule":
     var lib = checkedLoadLib(DllData)
@@ -67,6 +73,7 @@ suite "Test Suites for Memlib":
     proc test4(a, b, c: cstring): cstring {.memlib: lib, cdecl, importc: 3.}
     proc test5(a, b, c: cstring): cstring {.memlib: lib, fastcall, importc: 4.}
     proc test6(a, b, c: cstring): cstring {.memlib: lib, stdcall, importc: 5.}
+    proc test_varargs(i: cint): cint {.memlib: lib, cdecl, varargs, importc.}
 
     check:
       test1("a", "b", "c") == "cdecl a b c"
@@ -75,6 +82,7 @@ suite "Test Suites for Memlib":
       test4("a", "b", "c") == "cdecl a b c"
       test5("a", "b", "c") == "fastcall a b c"
       test6("a", "b", "c") == "stdcall a b c"
+      test_varargs(1, 2, 3, 4, 0) == 10
 
   test "Hook the Windows API to use preloaded MemoryModule":
     const Name = "this_dll_not_exist"
@@ -88,6 +96,7 @@ suite "Test Suites for Memlib":
     check(GetProcAddress(LoadLibrary(Name), cast[LPCSTR](3)) == lib.symAddr(3))
     check(GetProcAddress(LoadLibrary(Name), cast[LPCSTR](4)) == lib.symAddr(4))
     check(GetProcAddress(LoadLibrary(Name), cast[LPCSTR](5)) == lib.symAddr(5))
+    check(GetProcAddress(LoadLibrary(Name), "test_varargs") == lib.symAddr("test_varargs"))
 
     proc test1(a, b, c: cstring): cstring {.memlib: Name, cdecl, importc: "test_cdecl".}
     proc test2(a, b, c: cstring): cstring {.memlib: Name, fastcall, importc: "test_fastcall".}
@@ -95,6 +104,7 @@ suite "Test Suites for Memlib":
     proc test4(a, b, c: cstring): cstring {.memlib: Name, cdecl, importc: 3.}
     proc test5(a, b, c: cstring): cstring {.memlib: Name, fastcall, importc: 4.}
     proc test6(a, b, c: cstring): cstring {.memlib: Name, stdcall, importc: 5.}
+    proc test_varargs(i: cint): cint {.memlib: Name, cdecl, varargs, importc.}
 
     check:
       test1("a", "b", "c") == "cdecl a b c"
@@ -103,6 +113,7 @@ suite "Test Suites for Memlib":
       test4("a", "b", "c") == "cdecl a b c"
       test5("a", "b", "c") == "fastcall a b c"
       test6("a", "b", "c") == "stdcall a b c"
+      test_varargs(1, 2, 3, 4, 0) == 10
 
   test "Read and Load a DLL at runtime":
     var lib = checkedLoadLib(DllContent readfile(DllPath))
@@ -112,6 +123,7 @@ suite "Test Suites for Memlib":
     proc test4(a, b, c: cstring): cstring {.memlib: lib, cdecl, importc: 3.}
     proc test5(a, b, c: cstring): cstring {.memlib: lib, fastcall, importc: 4.}
     proc test6(a, b, c: cstring): cstring {.memlib: lib, stdcall, importc: 5.}
+    proc test_varargs(i: cint): cint {.memlib: lib, cdecl, varargs, importc.}
 
     check:
       test1("a", "b", "c") == "cdecl a b c"
@@ -120,6 +132,7 @@ suite "Test Suites for Memlib":
       test4("a", "b", "c") == "cdecl a b c"
       test5("a", "b", "c") == "fastcall a b c"
       test6("a", "b", "c") == "stdcall a b c"
+      test_varargs(1, 2, 3, 4, 0) == 10
 
   test "Memlib error handling":
     const NotDll = staticReadDll(currentSourcePath())
@@ -162,33 +175,39 @@ suite "Test Suites for Memlib":
         proc test1(a, b, c: cstring): cstring {.cdecl, importc: "test_cdecl".}
         proc test2(a, b, c: cstring): cstring {.fastcall, importc: "test_fastcall".}
         proc test3(a, b, c: cstring): cstring {.stdcall, importc: "test_stdcall".}
+        proc test_varargs(i: cint): cint {.cdecl, varargs, importc.}
 
         check:
           test1("a", "b", "c") == "cdecl a b c"
           test2("a", "b", "c") == "fastcall a b c"
           test3("a", "b", "c") == "stdcall a b c"
+          test_varargs(1, 2, 3, 4, 0) == 10
 
     withPragma { memlib: DllPath }:
       block:
         proc test1(a, b, c: cstring): cstring {.cdecl, importc: "test_cdecl".}
         proc test2(a, b, c: cstring): cstring {.fastcall, importc: "test_fastcall".}
         proc test3(a, b, c: cstring): cstring {.stdcall, importc: "test_stdcall".}
+        proc test_varargs(i: cint): cint {.cdecl, varargs, importc.}
 
         check:
           test1("a", "b", "c") == "cdecl a b c"
           test2("a", "b", "c") == "fastcall a b c"
           test3("a", "b", "c") == "stdcall a b c"
+          test_varargs(1, 2, 3, 4, 0) == 10
 
     withPragma { memlib: DllData }:
       block:
         proc test1(a, b, c: cstring): cstring {.cdecl, importc: "test_cdecl".}
         proc test2(a, b, c: cstring): cstring {.fastcall, importc: "test_fastcall".}
         proc test3(a, b, c: cstring): cstring {.stdcall, importc: "test_stdcall".}
+        proc test_varargs(i: cint): cint {.cdecl, varargs, importc.}
 
         check:
           test1("a", "b", "c") == "cdecl a b c"
           test2("a", "b", "c") == "fastcall a b c"
           test3("a", "b", "c") == "stdcall a b c"
+          test_varargs(1, 2, 3, 4, 0) == 10
 
   test "BuildPragma macro (Pragma pragma replacement)":
     block:
@@ -196,30 +215,36 @@ suite "Test Suites for Memlib":
       proc test1(a, b, c: cstring): cstring {.mylib, cdecl, importc: "test_cdecl".}
       proc test2(a, b, c: cstring): cstring {.mylib, fastcall, importc: "test_fastcall".}
       proc test3(a, b, c: cstring): cstring {.mylib, stdcall, importc: "test_stdcall".}
+      proc test_varargs(i: cint): cint {.mylib, cdecl, varargs, importc.}
 
       check:
         test1("a", "b", "c") == "cdecl a b c"
         test2("a", "b", "c") == "fastcall a b c"
         test3("a", "b", "c") == "stdcall a b c"
+        test_varargs(1, 2, 3, 4, 0) == 10
 
     block:
       buildPragma { memlib: DllPath }: mylib
       proc test1(a, b, c: cstring): cstring {.mylib, cdecl, importc: "test_cdecl".}
       proc test2(a, b, c: cstring): cstring {.mylib, fastcall, importc: "test_fastcall".}
       proc test3(a, b, c: cstring): cstring {.mylib, stdcall, importc: "test_stdcall".}
+      proc test_varargs(i: cint): cint {.mylib, cdecl, varargs, importc.}
 
       check:
         test1("a", "b", "c") == "cdecl a b c"
         test2("a", "b", "c") == "fastcall a b c"
         test3("a", "b", "c") == "stdcall a b c"
+        test_varargs(1, 2, 3, 4, 0) == 10
 
     block:
       buildPragma { memlib: DllData }: mylib
       proc test1(a, b, c: cstring): cstring {.mylib, cdecl, importc: "test_cdecl".}
       proc test2(a, b, c: cstring): cstring {.mylib, fastcall, importc: "test_fastcall".}
       proc test3(a, b, c: cstring): cstring {.mylib, stdcall, importc: "test_stdcall".}
+      proc test_varargs(i: cint): cint {.mylib, cdecl, varargs, importc.}
 
       check:
         test1("a", "b", "c") == "cdecl a b c"
         test2("a", "b", "c") == "fastcall a b c"
         test3("a", "b", "c") == "stdcall a b c"
+        test_varargs(1, 2, 3, 4, 0) == 10

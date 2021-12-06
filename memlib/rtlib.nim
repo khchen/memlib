@@ -120,35 +120,48 @@ proc addParams(def: NimNode) =
         assert def.body[^1].kind == nnkCall
         def.body[^1].add node[i]
 
+proc isVarargs(def: NimNode): bool =
+  for i in def.pragma:
+    if i.eqIdent("varargs"): return true
+  return false
+
 proc compose(dll, def: NimNode, hasRaises: bool): NimNode =
   var
     (sym, procty) = def.rewritePragma(hasRaises)
     rtLookup = ident(if `hasRaises`: "checkedRtlibLookup" else: "rtlibLookup")
+    isVarargs = def.isVarargs()
+    name = if isVarargs: ident(def.name.strVal) else: ident("call")
 
-  def.body = quote do:
+  var code = quote do:
     var
-      call {.global.}: `procty`
+      `name` {.global.}: `procty`
       sym: LPCSTR
 
     when `sym` is string:
-      sym = cstring `sym`
+      sym = LPCSTR `sym`
     elif `sym` is SomeInteger:
       sym = `sym`.int[LPCSTR]
     else:
       {.fatal: "importc only allows string or integer".}
 
-    if call.isNil:
+    if `name`.isNil:
       {.gcsafe.}:
         when `dll` is string: # Load dll at runtime
-          `rtLookup`(call.addr[ptr pointer], `dll`, sym)
+          `rtlookup`(`name`.addr[ptr pointer], `dll`, sym)
 
         else:
           {.fatal: "rtlib only accepts string".}
 
-    call()
+    `name`()
 
-  def.addParams()
-  result = def
+  if isVarargs:
+    code.del(code.len - 1) # remove last call
+    result = code
+
+  else:
+    def.body = code
+    def.addParams() # add params to last call
+    result = def
 
 macro checkedRtlib*(dll, def: untyped): untyped =
   ## `dynlib` pragma replacement to load DLL at runtime.
