@@ -830,9 +830,9 @@ proc loadString*(lib: MemoryModule, id: UINT, lang: WORD = 0): string
 
 # for hooks
 
-proc LdrLoadDll(PathToFile: PWCHAR, Flags: ULONG, ModuleFileName: PUNICODE_STRING, ModuleHandle: PHANDLE): NTSTATUS {.stdcall, dynlib: "ntdll", importc.}
+proc LdrLoadDll(PathToFile: PWCHAR, Flags: PULONG, ModuleFileName: PUNICODE_STRING, ModuleHandle: PHANDLE): NTSTATUS {.stdcall, dynlib: "ntdll", importc.}
 
-proc myLdrLoadDll(PathToFile: PWCHAR, Flags: ULONG, ModuleFileName: PUNICODE_STRING, ModuleHandle: PHANDLE): NTSTATUS {.stdcall, minhook: LdrLoadDll.} =
+proc myLdrLoadDll(PathToFile: PWCHAR, Flags: PULONG, ModuleFileName: PUNICODE_STRING, ModuleHandle: PHANDLE): NTSTATUS {.stdcall, minhook: LdrLoadDll.} =
   withLock(gLock):
     for i in 0 ..< memLibs.len:
       if memLibs[i].name != nil and lstrcmpiW(ModuleFileName[].Buffer, memLibs[i].name) == 0:
