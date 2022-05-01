@@ -10,7 +10,7 @@
 ## implementation of the famous MemoryModule library.
 ## So that the we can embed all DLLs into the main EXE file.
 
-import tables, macros, md5, locks, os, terminal, strutils, dynlib
+import tables, macros, md5, locks, os, terminal, strutils, dynlib, bitops
 import winim/lean, minhook
 import memlib/private/sharedseq
 
@@ -849,6 +849,42 @@ proc myGetProcAddress(hModule: HMODULE, lpProcName: LPCSTR): FARPROC {.stdcall, 
         if hModule == memLibs[i][HANDLE]:
           return memLibs[i].symAddr(lpProcName)
 
+proc myGetModuleHandleExW(dwFlags: DWORD, lpModuleName: LPCWSTR, phModule: ptr HMODULE): WINBOOL {.stdcall, minhook: GetModuleHandleExW.} =
+    let pageSize = getPageSize()
+    withLock(gLock):
+      for i in 0 ..< memLibs.len:
+        if bitAnd(dwFlags, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS):
+            let address = lpModuleName[uint]
+            let start = memLibs[i].codeBase[uint]
+            let size = alignUp(memLibs[i].headers.OptionalHeader.SizeOfImage{uint}, pageSize)
+            if start <= address and address < start + size:
+              phModule[] = memLibs[i][HANDLE]
+              return TRUE
+        else:
+          if memLibs[i].name != nil and lstrcmpiW(lpModuleName, memLibs[i].name) == 0:
+            phModule[] = memLibs[i][HANDLE]
+            return TRUE
+    return GetModuleHandleExW(dwFlags, lpModuleName, phModule)
+
+proc K32EnumProcessModules(hProcess: HANDLE, lphModule: ptr UncheckedArray[HMODULE], cb: DWORD, cbNeeded: ptr DWORD): WINBOOL {. dynlib: "kernel32", importc: "K32EnumProcessModules", stdcall.}
+proc myK32EnumProcessModules(hProcess: HANDLE, lphModule: ptr UncheckedArray[HMODULE], cb: DWORD, cbNeeded: ptr DWORD): WINBOOL {.stdcall, minhook: K32EnumProcessModules.} =
+  result = K32EnumProcessModules(hProcess, lphModule, cb, cbNeeded)
+  if result == 1:
+      var sz = cbNeeded[] div 8
+      var mx = cb div 8
+      for i in 0 ..< memLibs.len:
+        if sz >= mx:
+          break
+        if memLibs[i].name != nil:
+          lphModule[sz] = memLibs[i][HANDLE]
+          sz += 1
+      cbNeeded[] = sz * 8
+
+# TODO: only if PSAPI_VERSION >= 2
+proc EnumProcessModules(hProcess: HANDLE, lphModule: ptr UncheckedArray[HMODULE], cb: DWORD, cbNeeded: ptr DWORD): WINBOOL {. dynlib: "psapi", importc: "EnumProcessModules", stdcall.}
+proc myEnumProcessModules(hProcess: HANDLE, lphModule: ptr UncheckedArray[HMODULE], cb: DWORD, cbNeeded: ptr DWORD): WINBOOL {.stdcall, minhook: EnumProcessModules.} =
+  return myK32EnumProcessModules(hProcess, lphModule, cb, cbNeeded)
+
 proc unhook*(lib: MemoryModule) {.raises: [].} =
   ## Removes the hooks.
   assert lib != nil
@@ -865,6 +901,9 @@ proc unhook*(lib: MemoryModule) {.raises: [].} =
       try:
         queueDisableHook(LdrLoadDll)
         queueDisableHook(GetProcAddress)
+        queueDisableHook(GetModuleHandleExW)
+        queueDisableHook(K32EnumProcessModules)
+        queueDisableHook(EnumProcessModules)
         applyQueued()
       except: discard
       hookEnabled = false
@@ -887,6 +926,9 @@ proc hook*(lib: MemoryModule, name: string) {.raises: [LibraryError].} =
       try:
         queueEnableHook(LdrLoadDll)
         queueEnableHook(GetProcAddress)
+        queueEnableHook(GetModuleHandleExW)
+        queueEnableHook(K32EnumProcessModules)
+        queueEnableHook(EnumProcessModules)
         applyQueued()
       except: discard
       hookEnabled = true
