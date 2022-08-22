@@ -7,11 +7,12 @@
 
 import unittest, memlib
 import winim/lean
+import std/os
 
 when defined(cpu64):
-  const DllPath = "../dlls/testdll64.dll"
+  const DllPath = currentSourcePath.parentDir / ".." / "dlls" / "testdll64.dll"
 else:
-  const DllPath = "../dlls/testdll32.dll"
+  const DllPath = currentSourcePath.parentDir / ".." / "dlls" / "testdll32.dll"
 
 const DllData = staticReadDll DllPath
 
