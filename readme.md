@@ -1,4 +1,4 @@
-# Memlib
+# Memlib ![Build Status](https://github.com/khchen/memlib/workflows/Test/badge.svg)  
 This module is designed to be a drop-in replacement for `dynlib pragma` and `dynlib module` in Windows. The main part of this module is a pure nim implementation of the famous MemoryModule library. [MemoryModule](https://github.com/fancycode/MemoryModule) is a C library that can load a DLL completely from memory without storing on the disk first. So that the we can embed all DLLs into the main EXE file.
 
 ## Features
