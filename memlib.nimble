@@ -28,7 +28,7 @@ task example, "Build Examples":
 
 task test, "Run Tests":
   withDir "tests":
-    exec "nim r test_basic"
-    exec "nim r test_exception_dll"
-    exec "nim r test_hook"
-    exec "nim r test_rtlib"
+    exec "nim c -r test_basic"
+    exec "nim c -r test_exception_dll"
+    exec "nim c -r test_hook"
+    exec "nim c -r test_rtlib"
