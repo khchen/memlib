@@ -1,3 +1,9 @@
+Version 1.3.0
+-------------
+* Suppress warning on last devel compiler (1.7.x).
+* Fix hook not works on some version of Windows.
+* Rewrite embedded_ssl example.
+
 Version 1.2.0
 -------------
 * Fix cstring issue to work with winim 3.7.0.

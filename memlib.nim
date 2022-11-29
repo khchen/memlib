@@ -1,7 +1,7 @@
 #====================================================================
 #
 #              Memlib - Load Windows DLL from memory
-#                  (c) Copyright 2021 Ward
+#                 (c) Copyright 2021-2022 Ward
 #
 #====================================================================
 
@@ -26,8 +26,8 @@ when not defined(windows):
   {.fatal: "Only implementation for Windows".}
 
 type
-  DllEntryProc = proc (dll: HINSTANCE, reason: DWORD, reserved: pointer): bool {.stdcall, gcsafe, raises: [], tags: [].}
-  ExeEntryProc = proc (): int {.stdcall, gcsafe, raises: [], tags: [].}
+  DllEntryProc = proc (dll: HINSTANCE, reason: DWORD, reserved: pointer): bool {.stdcall, gcsafe.}
+  ExeEntryProc = proc (): int {.stdcall, gcsafe.}
 
   NameOrdinal = object
     cname: LPCSTR
@@ -44,7 +44,7 @@ type
     symbols: SharedSeq[NameOrdinal]
     hash: MD5Digest
     reference: int
-    name: LPCWSTR
+    name: string
 
   MemoryModule* = ptr MemoryModuleObj
     ## Pointer to a MemoryModule object.
@@ -58,11 +58,17 @@ var
   gLock: Lock
   hookEnabled: bool
 
-proc `[]`[T](x: T, U: typedesc): U =
+proc `[]`[T](x: T, U: typedesc): U {.inline.} =
   ## syntax sugar for cast
-  cast[U](x)
+  when sizeof(U) > sizeof(x):
+    when sizeof(x) == 1: cast[U](cast[uint8](x).uint64)
+    elif sizeof(x) == 2: cast[U](cast[uint16](x).uint64)
+    elif sizeof(x) == 4: cast[U](cast[uint32](x).uint64)
+    else: cast[U](cast[uint64](x))
+  else:
+    cast[U](x)
 
-proc `{}`[T](x: T, U: typedesc): U =
+proc `{}`[T](x: T, U: typedesc): U {.inline.} =
   ## syntax sugar for zero extends cast
   when sizeof(x) == 1: x[uint8][U]
   elif sizeof(x) == 2: x[uint16][U]
@@ -70,13 +76,13 @@ proc `{}`[T](x: T, U: typedesc): U =
   elif sizeof(x) == 8: x[uint64][U]
   else: {.fatal.}
 
+proc `{}`[T](p: T, x: SomeInteger): T {.inline.} =
+  ## syntax sugar for pointer (or any other type) arithmetics
+  (p[int] +% x{int})[T]
+
 template `++`[T](p: var ptr T) =
   ## syntax sugar for pointer increment
   p = cast[ptr T](p[int] +% sizeof(T))
-
-template `{}`[T](p: T, x: SomeInteger): T =
-  ## syntax sugar for pointer (or any other type) arithmetics
-  cast[T]((cast[int](p) +% x{int}))
 
 template alignUp[T: uint|pointer](value: T, alignment: uint): T =
   cast[T]((cast[uint](value) + alignment - 1) and not (alignment - 1))
@@ -84,21 +90,23 @@ template alignUp[T: uint|pointer](value: T, alignment: uint): T =
 template alignDown[T: uint|pointer](value: T, alignment: uint): T =
   cast[T](cast[uint](value) and not (alignment - 1))
 
+template MAKEINTRESOURCE(i: untyped): untyped = (i and 0xffff)[LPTSTR]
+
 iterator sections(ntHeader: PIMAGE_NT_HEADERS): var IMAGE_SECTION_HEADER =
   let sections = IMAGE_FIRST_SECTION(ntHeader)[ptr UncheckedArray[IMAGE_SECTION_HEADER]]
   for i in 0 ..< int ntHeader.FileHeader.NumberOfSections:
     yield sections[i]
 
-proc getPageSize(): uint {.inline, raises: [].} =
+proc getPageSize(): uint {.inline.} =
   var sysInfo: SYSTEM_INFO
   GetNativeSystemInfo(sysInfo)
   return sysInfo.dwPageSize{uint}
 
-proc symErrorMessage(sym: LPCSTR): string {.raises: [].} =
+proc symErrorMessage(sym: LPCSTR): string =
   let msg = if HIWORD(sym{uint}) == 0: "ordinal " & $(sym{uint}) else: "symbol " & $sym
   result = "Could not find " & msg
 
-proc validate(data: pointer, size: int): MD5Digest {.raises: [LibraryError].} =
+proc validate(data: pointer, size: int): MD5Digest =
   if data == nil or size < sizeof(IMAGE_DOS_HEADER):
     raise newException(LibraryError, "Invalid data")
 
@@ -133,7 +141,7 @@ proc validate(data: pointer, size: int): MD5Digest {.raises: [LibraryError].} =
   ctx.md5Update(data[cstring], size)
   ctx.md5Final(result)
 
-proc newMemoryModule(): MemoryModule {.raises: [LibraryError].} =
+proc newMemoryModule(): MemoryModule =
   result = createShared(MemoryModuleObj)
   if result == nil:
     raise newException(LibraryError, "Out of memory")
@@ -141,10 +149,10 @@ proc newMemoryModule(): MemoryModule {.raises: [LibraryError].} =
   result.modules = newSharedSeq[HMODULE]()
   result.symbols = newSharedSeq[NameOrdinal]()
 
-proc dealloc(lib: MemoryModule) {.inline, raises: [].} =
+proc dealloc(lib: MemoryModule) {.inline.} =
   deallocShared(lib)
 
-proc allocMemory(lib: MemoryModule, ntHeader: PIMAGE_NT_HEADERS, pageSize: uint) {.raises: [LibraryError].} =
+proc allocMemory(lib: MemoryModule, ntHeader: PIMAGE_NT_HEADERS, pageSize: uint) =
   var lastSectionEnd = 0'u
   for section in ntHeader.sections:
     let endOfSection = section.VirtualAddress{uint}{
@@ -186,7 +194,7 @@ proc allocMemory(lib: MemoryModule, ntHeader: PIMAGE_NT_HEADERS, pageSize: uint)
 
   lib.codeBase = codeBase
 
-proc copyHeaders(lib: MemoryModule, dosHeader: PIMAGE_DOS_HEADER, ntHeader: PIMAGE_NT_HEADERS) {.raises: [].} =
+proc copyHeaders(lib: MemoryModule, dosHeader: PIMAGE_DOS_HEADER, ntHeader: PIMAGE_NT_HEADERS) =
   # commit memory for headers
   let headers = VirtualAlloc(lib.codeBase, ntHeader.OptionalHeader.SizeOfHeaders, MEM_COMMIT, PAGE_READWRITE)
 
@@ -196,7 +204,7 @@ proc copyHeaders(lib: MemoryModule, dosHeader: PIMAGE_DOS_HEADER, ntHeader: PIMA
   lib.headers.OptionalHeader.ImageBase = lib.codeBase[ntHeader.OptionalHeader.ImageBase.type]
   lib.isDll = (ntHeader.FileHeader.Characteristics and IMAGE_FILE_DLL) != 0
 
-proc copySections(lib: MemoryModule, data: pointer, size: int, ntHeader: PIMAGE_NT_HEADERS) {.raises: [LibraryError].} =
+proc copySections(lib: MemoryModule, data: pointer, size: int, ntHeader: PIMAGE_NT_HEADERS) =
   let codeBase = lib.codeBase
 
   for section in lib.headers.sections:
@@ -236,7 +244,7 @@ proc copySections(lib: MemoryModule, data: pointer, size: int, ntHeader: PIMAGE_
     section.Misc.PhysicalAddress = dest[DWORD]
     copyMem(dest, data{section.PointerToRawData}, section.SizeOfRawData)
 
-proc performBaseRelocation(lib: MemoryModule, ntHeader: PIMAGE_NT_HEADERS) {.raises: [].} =
+proc performBaseRelocation(lib: MemoryModule, ntHeader: PIMAGE_NT_HEADERS) =
 
   iterator relocations(codeBase: pointer, directory: IMAGE_DATA_DIRECTORY): PIMAGE_BASE_RELOCATION =
     if directory.Size != 0:
@@ -279,7 +287,7 @@ proc performBaseRelocation(lib: MemoryModule, ntHeader: PIMAGE_NT_HEADERS) {.rai
 
   lib.isRelocated = true
 
-proc buildImportTable(lib: MemoryModule) {.raises: [LibraryError].} =
+proc buildImportTable(lib: MemoryModule) =
 
   iterator descriptors(codeBase: pointer, directory: IMAGE_DATA_DIRECTORY): IMAGE_IMPORT_DESCRIPTOR =
     if directory.Size != 0:
@@ -331,7 +339,7 @@ proc buildImportTable(lib: MemoryModule) {.raises: [LibraryError].} =
         if funcRef[] == nil:
           raise newException(LibraryError, $cfunc & " not found in " & $cname)
 
-proc finalizeSections(lib: MemoryModule, pageSize: uint) {.raises: [LibraryError].} =
+proc finalizeSections(lib: MemoryModule, pageSize: uint) =
   type
     SectionData = object
       address: pointer
@@ -429,9 +437,9 @@ proc finalizeSections(lib: MemoryModule, pageSize: uint) {.raises: [LibraryError
   data.last = true
   lib.finalizeSection(data)
 
-proc executeTLS(lib: MemoryModule) {.raises: [].} =
+proc executeTLS(lib: MemoryModule) =
   type
-    PIMAGE_TLS_CALLBACK = proc (DllHandle: PVOID, Reason: DWORD, Reserved: PVOID) {.stdcall, gcsafe, raises: [], tags: [].}
+    PIMAGE_TLS_CALLBACK = proc (DllHandle: PVOID, Reason: DWORD, Reserved: PVOID) {.stdcall, gcsafe.}
 
   let
     codeBase = lib.codeBase
@@ -447,7 +455,7 @@ proc executeTLS(lib: MemoryModule) {.raises: [].} =
         callback[](codeBase, DLL_PROCESS_ATTACH, nil)
         ++callback
 
-proc addFunctionTable(lib: MemoryModule) {.raises: [].} =
+proc addFunctionTable(lib: MemoryModule) =
   when defined(cpu64):
     let
       codeBase = lib.codeBase
@@ -458,7 +466,7 @@ proc addFunctionTable(lib: MemoryModule) {.raises: [].} =
 
     RtlAddFunctionTable(funcTablePtr, (directory.Size div sizeof(RUNTIME_FUNCTION).DWORD), codeBase[DWORD64])
 
-proc initialize(lib: MemoryModule) {.raises: [LibraryError].} =
+proc initialize(lib: MemoryModule) =
   lib.entry = lib.codeBase{lib.headers.OptionalHeader.AddressOfEntryPoint}
   if lib.entry != nil and lib.isDll:
     let ok = lib.entry[DllEntryProc](lib.codeBase[HINSTANCE], DLL_PROCESS_ATTACH, nil)
@@ -467,7 +475,7 @@ proc initialize(lib: MemoryModule) {.raises: [LibraryError].} =
 
     lib.initialized = true
 
-proc gatherSymbols(lib: MemoryModule) {.raises: [].} =
+proc gatherSymbols(lib: MemoryModule) =
 
   iterator entries(codeBase: pointer, exports: PIMAGE_EXPORT_DIRECTORY): (LPCSTR, int) =
     var
@@ -496,51 +504,51 @@ proc gatherSymbols(lib: MemoryModule) {.raises: [].} =
   lib.symbols.sort() do (x, y: NameOrdinal) -> int:
     result = lstrcmpA(x.cname, y.cname)
 
-proc findSymbol(lib: MemoryModule, name: LPCSTR): pointer {.raises: [LibraryError].} =
-  block:
-    if lib == nil: break
+proc findSymbol(lib: MemoryModule, name: LPCSTR): pointer =
+  block main:
+    if lib == nil: break main
 
     let
       codeBase = lib.codeBase
       directory = lib.headers.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT]
 
-    if directory.Size == 0: break
+    if directory.Size == 0: break main
 
     let exports = codeBase{directory.VirtualAddress}[PIMAGE_EXPORT_DIRECTORY]
-    if exports.NumberOfFunctions == 0: break
+    if exports.NumberOfFunctions == 0: break main
 
     var index = 0
     if HIWORD(name{uint}) == 0:
-      if LOWORD(name{uint})[DWORD] <% exports.Base: break
+      if LOWORD(name{uint})[DWORD] <% exports.Base: break main
       index = LOWORD(name{uint})[DWORD] -% exports.Base
 
     else:
-      let found = lib.symbols.binarySearch(name) do (x: NameOrdinal, y: LPCSTR) -> int:
+      var found = lib.symbols.binarySearch(name) do (x: NameOrdinal, y: LPCSTR) -> int:
         result = lstrcmpA(x.cname, y)
 
-      if found < 0: break
+      if found < 0: break main
       index = lib.symbols[found].ordinal
 
-    if index >% exports.NumberOfFunctions: break
+    if index >% exports.NumberOfFunctions: break main
 
     let rva = codeBase{exports.AddressOfFunctions}{index * 4}[ptr uint32][]
     return codeBase{rva}
 
   raise newException(LibraryError, symErrorMessage(name))
 
-proc register(lib: MemoryModule, hash: MD5Digest) {.raises: [].} =
+proc register(lib: MemoryModule, hash: MD5Digest) =
   withLock(gLock):
     lib.hash = hash
     lib.reference = 1
     memLibs.add lib
 
-proc unregister(lib: MemoryModule) {.raises: [].} =
+proc unregister(lib: MemoryModule) =
   withLock(gLock):
     let found = memLibs.find lib
     if found >= 0:
       memLibs.del found
 
-proc reloadCheck(hash: MD5Digest, lib: var MemoryModule): bool {.raises: [].} =
+proc reloadCheck(hash: MD5Digest, lib: var MemoryModule): bool =
   withLock(gLock):
     for i in 0 ..< memLibs.len:
       if memLibs[i].hash == hash:
@@ -548,7 +556,7 @@ proc reloadCheck(hash: MD5Digest, lib: var MemoryModule): bool {.raises: [].} =
         lib = memLibs[i]
         return true
 
-proc unloadLib(lib: MemoryModule, force: bool) {.raises: [].} =
+proc unloadLib(lib: MemoryModule, force: bool) =
   if lib != nil:
     if lib.reference > 1 and not force:
       lib.reference.dec
@@ -568,12 +576,10 @@ proc unloadLib(lib: MemoryModule, force: bool) {.raises: [].} =
     if lib.codeBase != nil:
       VirtualFree(lib.codeBase, 0, MEM_RELEASE)
 
-    if lib.name != nil:
-      deallocShared(lib.name)
-
+    lib.name = ""
     lib.dealloc()
 
-proc loadLib(data: pointer, size: int): MemoryModule {.raises: [LibraryError].} =
+proc loadLib(data: pointer, size: int): MemoryModule =
   try:
     let hash = validate(data, size)
     if reloadCheck(hash, result): return
@@ -618,51 +624,51 @@ atexit:
 
 # exported procs from here
 
-proc checkedLoadLib*(data: DllContent): MemoryModule {.inline, raises: [LibraryError].} =
+proc checkedLoadLib*(data: DllContent): MemoryModule {.inline.} =
   ## Loads a DLL from memory. Raise `LibraryError` if the DLL could not be loaded.
   result = loadLib(&data.string, data.string.len)
 
-proc checkedLoadLib*(data: openarray[byte|char]): MemoryModule {.inline, raises: [LibraryError].} =
+proc checkedLoadLib*(data: openarray[byte|char]): MemoryModule {.inline.} =
   ## Loads a DLL from memory. Raise `LibraryError` if the DLL could not be loaded.
   result = loadLib(unsafeaddr data[0], data.len)
 
-proc checkedSymAddr*(lib: MemoryModule, name: string|LPCSTR): pointer {.inline, raises: [LibraryError].} =
+proc checkedSymAddr*(lib: MemoryModule, name: string|LPCSTR): pointer {.inline.} =
   ## Retrieves the address of a procedure from DLL by name.
   ## Raise `LibraryError` if the symbol could not be found.
   result = lib.findSymbol(name)
 
-proc checkedSymAddr*(lib: MemoryModule, ordinal: range[0..65535]): pointer {.inline, raises: [LibraryError].} =
+proc checkedSymAddr*(lib: MemoryModule, ordinal: range[0..65535]): pointer {.inline.} =
   ## Retrieves the address of a procedure from DLL by ordinal.
   ## Raise `LibraryError` if the ordinal out of range.
   result = lib.findSymbol(ordinal[LPCSTR])
 
-proc loadLib*(data: DllContent): MemoryModule {.inline, raises: [].} =
+proc loadLib*(data: DllContent): MemoryModule {.inline.} =
   ## Loads a DLL from memory. Returns `nil` if the DLL could not be loaded.
   try: result = checkedLoadLib(data)
   except: result = nil
 
-proc loadLib*(data: openarray[byte|char]): MemoryModule {.inline, raises: [].} =
+proc loadLib*(data: openarray[byte|char]): MemoryModule {.inline.} =
   ## Loads a DLL from memory. Returns `nil` if the DLL could not be loaded.
   try: result = checkedLoadLib(data)
   except: result = nil
 
-proc symAddr*(lib: MemoryModule, name: string|LPCSTR): pointer {.inline, raises: [].} =
+proc symAddr*(lib: MemoryModule, name: string|LPCSTR): pointer {.inline.} =
   ## Retrieves the address of a procedure from DLL by name.
   ## Returns `nil` if the symbol could not be found.
   try: result = checkedSymAddr(lib, name)
   except: result = nil
 
-proc symAddr*(lib: MemoryModule, ordinal: range[0..65535]): pointer {.inline, raises: [].} =
+proc symAddr*(lib: MemoryModule, ordinal: range[0..65535]): pointer {.inline.} =
   ## Retrieves the address of a procedure from DLL by ordinal.
   ## Returns `nil` if the ordinal out of range.
   try: result = checkedSymAddr(lib, ordinal)
   except: result = nil
 
-proc unloadLib*(lib: MemoryModule) {.inline, raises: [].} =
+proc unloadLib*(lib: MemoryModule) {.inline.} =
   ## Unloads the DLL.
   lib.unloadLib(force = false)
 
-proc run*(lib: MemoryModule): int {.discardable, raises: [LibraryError].} =
+proc run*(lib: MemoryModule): int {.discardable.} =
   ## Execute entry point (EXE only). The entry point can only be executed
   ## if the EXE has been loaded to the correct base address or it could
   ## be relocated (i.e. relocation information have not been stripped by
@@ -687,8 +693,7 @@ proc run*(lib: MemoryModule): int {.discardable, raises: [LibraryError].} =
 
 # for resources
 
-proc findResource*(lib: HMODULE, name: LPCTSTR, typ: LPCTSTR, lang: WORD = 0): HRSRC
-    {.raises: [LibraryError].} =
+proc findResource*(lib: HMODULE, name: LPCTSTR, typ: LPCTSTR, lang: WORD = 0): HRSRC =
   ## Find the location of a resource with the specified type, name and language.
 
   proc RtlImageNtHeader(base: HMODULE): PIMAGE_NT_HEADERS {.stdcall, importc, dynlib: "ntdll".}
@@ -796,32 +801,29 @@ proc loadString*(lib: HMODULE, id: UINT, lang: WORD = 0): string =
   let pucaWchar = cast[ptr UncheckedArray[WCHAR]](&data.NameString[0])
   result = $$toOpenArray(pucaWchar, 0, int data.Length - 1)
 
-proc findResource*(lib: MemoryModule, name: LPCTSTR, typ: LPCTSTR, lang: WORD = 0): HRSRC
-    {.inline, raises: [LibraryError].} =
+proc findResource*(lib: MemoryModule, name: LPCTSTR, typ: LPCTSTR,
+    lang: WORD = 0): HRSRC {.inline.} =
   ## Find the location of a resource with the specified type, name and language.
   if lib == nil:
     raise newException(LibraryError, "Invalid handle")
 
   result = findResource(lib.codeBase[HMODULE], name, typ, lang)
 
-proc sizeOfResource*(lib: MemoryModule, resource: HRSRC): DWORD
-    {.inline, raises: [LibraryError].} =
+proc sizeOfResource*(lib: MemoryModule, resource: HRSRC): DWORD {.inline.} =
   ## Get the size of the resource in bytes.
   if lib == nil:
     raise newException(LibraryError, "Invalid handle")
 
   result = sizeOfResource(lib.codeBase[HMODULE], resource)
 
-proc loadResource*(lib: MemoryModule, resource: HRSRC): HGLOBAL
-    {.inline, raises: [LibraryError].} =
+proc loadResource*(lib: MemoryModule, resource: HRSRC): HGLOBAL {.inline.} =
   ## Get a pointer to the contents of the resource.
   if lib == nil:
     raise newException(LibraryError, "Invalid handle")
 
   result = loadResource(lib.codeBase[HMODULE], resource)
 
-proc loadString*(lib: MemoryModule, id: UINT, lang: WORD = 0): string
-    {.inline, raises: [LibraryError].} =
+proc loadString*(lib: MemoryModule, id: UINT, lang: WORD = 0): string {.inline.} =
   ## Load a string resource.
   if lib == nil:
     raise newException(LibraryError, "Invalid handle")
@@ -830,18 +832,36 @@ proc loadString*(lib: MemoryModule, id: UINT, lang: WORD = 0): string
 
 # for hooks
 
-proc LdrLoadDll(PathToFile: PWCHAR, Flags: ULONG, ModuleFileName: PUNICODE_STRING, ModuleHandle: PHANDLE): NTSTATUS {.stdcall, dynlib: "ntdll", importc.}
+# hook LdrLoadDll will crash on some version of Windows by unknow reason.
+# aoivd to use undocumented api ?
 
-proc myLdrLoadDll(PathToFile: PWCHAR, Flags: ULONG, ModuleFileName: PUNICODE_STRING, ModuleHandle: PHANDLE): NTSTATUS {.stdcall, minhook: LdrLoadDll.} =
+proc myLoadDll(name: string): HMODULE =
   withLock(gLock):
     for i in 0 ..< memLibs.len:
-      if memLibs[i].name != nil and lstrcmpiW(ModuleFileName[].Buffer, memLibs[i].name) == 0:
-        ModuleHandle[] = memLibs[i][HANDLE]
-        return STATUS_SUCCESS
+      if memLibs[i].name.toLowerAscii == name.toLowerAscii:
+        return memLibs[i][HMODULE]
 
-  result = LdrLoadDll(PathToFile, Flags, ModuleFileName, ModuleHandle)
+proc myLoadLibraryExA(lpLibFileName: LPCSTR, hFile: HANDLE, dwFlags: DWORD): HMODULE {.stdcall, minhook: LoadLibraryExA.} =
+  result = myLoadDll($lpLibFileName)
+  if result == 0:
+    result = LoadLibraryExA(lpLibFileName, hFile, dwFlags)
 
-proc myGetProcAddress(hModule: HMODULE, lpProcName: LPCSTR): FARPROC {.stdcall, minhook: GetProcAddress, raises: [].} =
+proc myLoadLibraryExW(lpLibFileName: LPCWSTR, hFile: HANDLE, dwFlags: DWORD): HMODULE {.stdcall, minhook: LoadLibraryExW.} =
+  result = myLoadDll($lpLibFileName)
+  if result == 0:
+    result = LoadLibraryExW(lpLibFileName, hFile, dwFlags)
+
+proc myLoadLibraryA(lpLibFileName: LPCSTR): HMODULE {.stdcall, minhook: LoadLibraryA.} =
+  result = myLoadDll($lpLibFileName)
+  if result == 0:
+    result = LoadLibraryA(lpLibFileName)
+
+proc myLoadLibraryW(lpLibFileName: LPCWSTR): HMODULE {.stdcall, minhook: LoadLibraryW.} =
+  result = myLoadDll($lpLibFileName)
+  if result == 0:
+    result = LoadLibraryW(lpLibFileName)
+
+proc myGetProcAddress(hModule: HMODULE, lpProcName: LPCSTR): FARPROC {.stdcall, minhook: GetProcAddress.} =
   result = GetProcAddress(hModule, lpProcName)
   if result == nil:
     withLock(gLock):
@@ -849,47 +869,46 @@ proc myGetProcAddress(hModule: HMODULE, lpProcName: LPCSTR): FARPROC {.stdcall, 
         if hModule == memLibs[i][HANDLE]:
           return memLibs[i].symAddr(lpProcName)
 
-proc unhook*(lib: MemoryModule) {.raises: [].} =
+proc unhook*(lib: MemoryModule) =
   ## Removes the hooks.
   assert lib != nil
-  if lib.name != nil:
-    deallocShared(lib.name)
-    lib.name = nil
+  lib.name = ""
 
   withLock(gLock):
     for i in 0 ..< memLibs.len:
-      if memLibs[i].name != nil:
+      if memLibs[i].name != "":
         return
 
     if hookEnabled:
       try:
-        queueDisableHook(LdrLoadDll)
+        queueDisableHook(LoadLibraryExA)
+        queueDisableHook(LoadLibraryExW)
+        queueDisableHook(LoadLibraryA)
+        queueDisableHook(LoadLibraryW)
         queueDisableHook(GetProcAddress)
         applyQueued()
       except: discard
       hookEnabled = false
 
-proc hook*(lib: MemoryModule, name: string) {.raises: [LibraryError].} =
+proc hook*(lib: MemoryModule, name: string) =
   ## Hooks the system API (LoadLibrary and GetProcAddress only) with specified name.
   ## Following requests will be redirected to the memory module
   assert lib != nil
   lib.unhook()
-
-  let wstr = string +$name
-  lib.name = createShared(char, wstr.len)[LPCWSTR]
-  if lib.name == nil:
-    raise newException(LibraryError, "Out of memory")
-
-  copyMem(lib.name, &wstr, wstr.len)
+  lib.name = name
 
   withLock(gLock):
     if not hookEnabled:
       try:
-        queueEnableHook(LdrLoadDll)
+        queueEnableHook(LoadLibraryExA)
+        queueEnableHook(LoadLibraryExW)
+        queueEnableHook(LoadLibraryA)
+        queueEnableHook(LoadLibraryW)
         queueEnableHook(GetProcAddress)
         applyQueued()
       except: discard
       hookEnabled = true
+
 
 # for memlib macro
 
@@ -932,30 +951,30 @@ template rtlookup(callPtr: ptr pointer, name: string, sym: LPCSTR, errorLib, err
   if callPtr[] == nil:
     errorSym
 
-proc checkedMemlookup*(callPtr: ptr pointer, dll: DllContent, sym: LPCSTR) {.raises: [LibraryError].} =
+proc checkedMemlookup*(callPtr: ptr pointer, dll: DllContent, sym: LPCSTR) =
   ## A helper used by `memlib` macro.
   memlookup(callPtr, dll, sym, checkedLoadLib, checkedSymAddr)
 
-proc memlookup*(callPtr: ptr pointer, dll: DllContent, sym: LPCSTR) {.raises: [].} =
+proc memlookup*(callPtr: ptr pointer, dll: DllContent, sym: LPCSTR) =
   ## A helper used by `memlib` macro.
   memlookup(callPtr, dll, sym, loadLib, symAddr)
 
-proc checkedLibLookup*(callPtr: ptr pointer, lib: MemoryModule, sym: LPCSTR) {.raises: [LibraryError].} =
+proc checkedLibLookup*(callPtr: ptr pointer, lib: MemoryModule, sym: LPCSTR) =
   ## A helper used by `memlib` macro.
   callPtr[] = lib.checkedSymAddr(sym)
 
-proc libLookup*(callPtr: ptr pointer, lib: MemoryModule, sym: LPCSTR) {.raises: [].} =
+proc libLookup*(callPtr: ptr pointer, lib: MemoryModule, sym: LPCSTR) =
   ## A helper used by `memlib` macro.
   callPtr[] = lib.symAddr(sym)
 
-proc checkedRtlookup*(callPtr: ptr pointer, name: string, sym: LPCSTR) {.raises: [LibraryError].} =
+proc checkedRtlookup*(callPtr: ptr pointer, name: string, sym: LPCSTR) =
   ## A helper used by `memlib` macro.
   rtlookup(callPtr, name, sym) do:
     raise newException(LibraryError, "Could not load " & name)
   do:
     raise newException(LibraryError, symErrorMessage(sym))
 
-proc rtlookup*(callPtr: ptr pointer, name: string, sym: LPCSTR) {.raises: [].} =
+proc rtlookup*(callPtr: ptr pointer, name: string, sym: LPCSTR) =
   ## A helper used by `memlib` macro.
   rtlookup(callPtr, name, sym) do:
     return
@@ -972,12 +991,6 @@ proc rewritePragma(def: NimNode, hasRaises: bool): (NimNode, NimNode) =
   # Procs imported from Dll implies gcsafe and raises: []
   typPragma.add ident("gcsafe")
   newPragma.add ident("gcsafe")
-
-  typPragma.add newColonExpr(ident("raises"), newNimNode(nnkBracket))
-  typPragma.add newColonExpr(ident("tags"), newNimNode(nnkBracket))
-  if not hasRaises:
-    newPragma.add newColonExpr(ident("raises"), newNimNode(nnkBracket))
-    newPragma.add newColonExpr(ident("tags"), newNimNode(nnkBracket))
 
   for node in def.pragma:
     # ignore single importc
@@ -1032,7 +1045,7 @@ proc compose(dll, def: NimNode, hasRaises: bool): NimNode =
       sym: LPCSTR
 
     when `sym` is string:
-      sym = LPCSTR `sym`
+      sym = cast[LPCSTR](cstring(`sym`))
     elif `sym` is SomeInteger:
       sym = `sym`.int[LPCSTR]
     else:

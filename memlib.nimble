@@ -1,6 +1,6 @@
 # Package
 
-version       = "1.2.0"
+version       = "1.3.0"
 author        = "Ward"
 description   = "Memlib - Load Windows DLL from memory"
 license       = "MIT"
@@ -24,7 +24,8 @@ task example, "Build Examples":
     exec "nim c usage1.nim"
     exec "nim c usage2.nim"
     exec "nim c embedded_sqlite.nim"
-    exec "nim c -d:ssl -d:nimDisableCertificateValidation embedded_ssl.nim"
+    exec "nim c -d:ssl -d:nimDisableCertificateValidation ssl_test.nim"
+    exec "nim c embedded_ssl_test.nim"
 
 task test, "Run Tests":
   withDir "tests":
@@ -32,3 +33,7 @@ task test, "Run Tests":
     exec "nim r test_exception_dll"
     exec "nim r test_hook"
     exec "nim r test_rtlib"
+
+task clean, "Delete all EXE and DLL files":
+  exec "cmd /c IF EXIST examples\\*.exe del examples\\*.exe"
+  exec "cmd /c IF EXIST dlls\\*.dll del dlls\\*.dll"

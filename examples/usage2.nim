@@ -1,7 +1,7 @@
 #====================================================================
 #
 #              Memlib - Load Windows DLL from memory
-#                  (c) Copyright 2021 Ward
+#                 (c) Copyright 2021-2022 Ward
 #
 #====================================================================
 
@@ -77,7 +77,7 @@ block:
 
   echo libversion(), " (pragma pragma + dynlib pragma)"
 
-# For memlib, you can use `BuildPragma` macro instead.
+# For memlib, you can use `buildPragma` macro instead.
 block:
   when defined(cpu64):
     const SqliteDll = staticReadDll("sqlite3_64.dll")

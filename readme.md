@@ -34,9 +34,9 @@ For example, the document of  [SHCreateMemStream](https://docs.microsoft.com/en-
 
 ```nim
 import memlib/rtlib
-proc SHCreateMemStream(pInit: pointer, cbInit: cint): ptr IStream 
+proc SHCreateMemStream(pInit: pointer, cbInit: cint): ptr IStream
   {.rtlib: "shlwapi", stdcall, importc: 12.}
-  
+
 var str = "abcde"
 let pStream = SHCreateMemStream(addr str[0], cint str.len)
 assert pStream != nil
@@ -48,4 +48,4 @@ assert pStream != nil
 ## License
 Read license.txt for more details.
 
-Copyright (c) 2021 Kai-Hung Chen, Ward. All rights reserved.
+Copyright (c) 2021-2022 Kai-Hung Chen, Ward. All rights reserved.

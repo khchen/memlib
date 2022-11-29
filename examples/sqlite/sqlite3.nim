@@ -10,7 +10,31 @@
 when defined(nimHasStyleChecks):
   {.push styleChecks: off.}
 
+#[
+when defined(windows):
+  when defined(nimOldDlls):
+    const Lib = "sqlite3.dll"
+  elif defined(cpu64):
+    const Lib = "sqlite3_64.dll"
+  else:
+    const Lib = "sqlite3_32.dll"
+elif defined(macosx):
+  const
+    Lib = "libsqlite3(|.0).dylib"
+else:
+  const
+    Lib = "libsqlite3.so(|.0)"
+
+when defined(staticSqlite):
+  {.pragma: mylib.}
+  {.compile("sqlite3.c", "-O3").}
+else:
+  {.pragma: mylib, dynlib: Lib.}
+]#
+
+#====================================================================
 # Modify to use memlib
+#====================================================================
 
 import memlib
 
@@ -21,6 +45,8 @@ else:
 
 let lib = checkedLoadLib(Lib)
 buildPragma { memlib: lib }: mylib
+
+#====================================================================
 
 const
   SQLITE_INTEGER* = 1
@@ -113,7 +139,7 @@ type
 
   Callback* = proc (para1: pointer, para2: int32, para3,
                      para4: cstringArray): int32{.cdecl.}
-  Tbind_destructor_func* = proc (para1: pointer){.cdecl, locks: 0, raises: [], tags: [], gcsafe.}
+  Tbind_destructor_func* = proc (para1: pointer){.cdecl, locks: 0, tags: [], gcsafe.}
   Create_function_step_func* = proc (para1: Pcontext, para2: int32,
                                       para3: PValueArg){.cdecl.}
   Create_function_func_func* = proc (para1: Pcontext, para2: int32,
