@@ -13,6 +13,7 @@
 import tables, macros, md5, locks, os, terminal, strutils, dynlib
 import winim/lean, minhook
 import memlib/private/sharedseq
+import std/strutils
 
 when (compiles do: import std/exitprocs):
   import std/exitprocs
@@ -1167,6 +1168,7 @@ proc staticReadDllWithName*(dll: string, hint = true): (string, DllContent) {.co
   ## Supports `dynlib` name patterns. For example: `libtcl(|8.5|8.4)`.
   proc checkDir(dir, filename: string): string =
     result = normalizedPath(dir / filename)
+    result = result.replace("\\","/")
     if fileExists(result):
       return result
 
